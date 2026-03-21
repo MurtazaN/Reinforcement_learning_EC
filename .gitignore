@@ -1,0 +1,13 @@
+# Ignore the following files and directories
+__pycache__/
+
+*.DS_Store
+
+# Ignore the following directories
+env/
+venv/
+hw2/
+
+deliverables/
+
+Q_table.pickle
