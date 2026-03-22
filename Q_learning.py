@@ -150,66 +150,80 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 	"""
 	Run Q-learning algorithm for a specified number of episodes.
 
-    Parameters:
-    - num_episodes (int): Number of episodes to run.
-    - gamma (float): Discount factor.
-    - epsilon (float): Exploration rate.
-    - decay_rate (float): Rate at which epsilon decays. Epsilon should be decayed as epsilon = epsilon * decay_rate after each episode.
+	Parameters:
+	- num_episodes (int): Number of episodes to run.
+	- gamma (float): Discount factor.
+	- epsilon (float): Exploration rate.
+	- decay_rate (float): Rate at which epsilon decays.
 
-    Returns:
-    - Q_table (dict): Dictionary containing the Q-values for each state-action pair.
-    """
+	Returns:
+	- Q_table (dict): Dictionary containing the Q-values for each state-action pair.
+	"""
 	Q_table = {}
-	N_sa = {}  # Dictionary to count updates for each (state, action) pair
+	N_sa = {}  # Track update counts per (state, action) pair
 	n_actions = env.action_space.n
+	episode_rewards = []  # Track total reward per episode for plotting
 
 	for episode in tqdm(range(num_episodes)):
 		obs, reward, done, info = env.reset()
 		state = hash(obs)
-		
+		total_reward = 0
+
 		while not done:
-            # Initialize Q-values for unseen states
+			# Initialize Q-values for unseen states
 			if state not in Q_table:
 				Q_table[state] = np.zeros(n_actions)
 				N_sa[state] = np.zeros(n_actions)
 
-            # Epsilon-greedy action selection
+			# Epsilon-greedy action selection
 			if random.random() < epsilon:
-				action = env.action_space.sample()  # Random action
+				action = env.action_space.sample()
 			else:
-				action = np.argmax(Q_table[state])  # Greedy action
+				action = int(np.argmax(Q_table[state]))
 
-            # Take action
+			# Take action
 			obs_next, reward, done, info = env.step(action)
 			next_state = hash(obs_next)
 
-            # Initialize next state if unseen
+			# Initialize next state if unseen
 			if next_state not in Q_table:
 				Q_table[next_state] = np.zeros(n_actions)
 				N_sa[next_state] = np.zeros(n_actions)
 
-            # Compute learning rate for this (s, a) pair
+			# Compute learning rate
 			alpha = 1.0 / (1.0 + N_sa[state][action])
 
-            # Q-learning update
+			# Q-learning update
 			best_next = np.max(Q_table[next_state])
 			Q_table[state][action] += alpha * (reward + gamma * best_next - Q_table[state][action])
 
-            # Increment visit count
+			# Increment visit count
 			N_sa[state][action] += 1
 
-            # Transition to next state
+			# Accumulate reward
+			total_reward += reward
+
+			# Transition
 			state = next_state
 
-        # Decay epsilon after each episode
+		# Decay epsilon after each episode
 		epsilon *= decay_rate
+		episode_rewards.append(total_reward)
 
-	return Q_table		
+	# ---- Save episode rewards for plotting ----
+	with open('episode_rewards.pickle', 'wb') as f:
+		pickle.dump(episode_rewards, f)
+
+	# ---- Save N_sa for weighted average table ----
+	with open('N_sa.pickle', 'wb') as f:
+		pickle.dump(N_sa, f)
+
+	return Q_table
 
 # Specify number of episodes and decay rate for training and evaluation.
 
-num_episodes = 50000
-decay_rate = 0.9999
+num_episodes = 130000
+decay_rate = 0.99998
 
 '''
 Run training if train_flag is set; otherwise, run evaluation using saved Q-table.

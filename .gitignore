@@ -10,4 +10,6 @@ hw2/
 
 deliverables/
 
-Q_table.pickle
+*.pickle
+*.log
+*.csv
