@@ -210,11 +210,11 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 		epsilon *= decay_rate
 		episode_rewards.append(total_reward)
 
-	# ---- Save episode rewards for plotting ----
+	# episode rewards for plotting
 	with open('episode_rewards.pickle', 'wb') as f:
 		pickle.dump(episode_rewards, f)
 
-	# ---- Save N_sa for weighted average table ----
+	# N_sa for weighted average table
 	with open('N_sa.pickle', 'wb') as f:
 		pickle.dump(N_sa, f)
 
@@ -275,5 +275,4 @@ if not train_flag:
 		rewards.append(total_reward)
 
 	avg_reward = sum(rewards)/len(rewards)
-	print(f"\n{BOLD}Average reward over {len(rewards)} episodes: {avg_reward:.2f}{RESET}\n")
-	print(f"\n Total reward over {len(rewards)} episodes: {sum(rewards):.2f}\n")
+	print(f"\nAverage reward over {len(rewards)} episodes: {avg_reward:.2f}{RESET}ok\n")
