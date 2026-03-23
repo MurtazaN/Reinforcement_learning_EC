@@ -1,8 +1,11 @@
 import sys
 import time
 import pickle
+import random
 import numpy as np
+import matplotlib.pyplot as plt
 from tqdm import tqdm
+from mdp_gym import CastleEscapeEnv
 from vis_gym import *
 
 BOLD = '\033[1m'  # ANSI escape sequence for bold text
@@ -157,7 +160,7 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 	- decay_rate (float): Rate at which epsilon decays.
 
 	Returns:
-	- Q_table (dict): Dictionary containing the Q-values for each state-action pair.
+	- tuple: (Q_table, episode_rewards, N_sa)
 	"""
 	Q_table = {}
 	N_sa = {}  # Track update counts per (state, action) pair
@@ -210,15 +213,7 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 		epsilon *= decay_rate
 		episode_rewards.append(total_reward)
 
-	# episode rewards for plotting
-	with open('episode_rewards.pickle', 'wb') as f:
-		pickle.dump(episode_rewards, f)
-
-	# N_sa for weighted average table
-	with open('N_sa.pickle', 'wb') as f:
-		pickle.dump(N_sa, f)
-
-	return Q_table
+	return Q_table, episode_rewards, N_sa
 
 # Specify number of episodes and decay rate for training and evaluation.
 
@@ -230,11 +225,13 @@ Run training if train_flag is set; otherwise, run evaluation using saved Q-table
 '''
 
 if train_flag:
-	Q_table = Q_learning(num_episodes=num_episodes, gamma=0.9, epsilon=1, decay_rate=decay_rate) # Run Q-learning
+	Q_table, episode_rewards, N_sa = Q_learning(num_episodes=num_episodes, gamma=0.9, epsilon=1, decay_rate=decay_rate) # Run Q-learning
 
 	# Save the Q-table dict to a file
 	with open('Q_table.pickle', 'wb') as handle:
 		pickle.dump(Q_table, handle, protocol=pickle.HIGHEST_PROTOCOL)
+	with open('train_stats.pickle', 'wb') as handle:
+		pickle.dump((episode_rewards, N_sa), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 '''
@@ -246,9 +243,81 @@ def softmax(x, temp=1.0):
 	e_x = np.exp((x - np.max(x)) / temp)
 	return e_x / e_x.sum(axis=0)
 
+def generate_results(Q_table, episode_rewards, N_sa):
+	rolling_window = 500
+	plt.figure(figsize=(10, 5))
+	plt.plot(episode_rewards, alpha=0.3, label='Raw reward')
+	if len(episode_rewards) >= rolling_window:
+		rolling_avg = np.convolve(episode_rewards, np.ones(rolling_window) / rolling_window, mode='valid')
+		plt.plot(range(rolling_window - 1, len(episode_rewards)), rolling_avg, color='red', label=f'{rolling_window}-episode rolling avg')
+	plt.xlabel('Episode')
+	plt.ylabel('Total Reward')
+	plt.title('Training Rewards per Episode')
+	plt.legend()
+	plt.tight_layout()
+	plt.savefig('training_rewards.png', dpi=150)
+	plt.close()
+	print('Saved as training_rewards.png')
+
+	WINDOW_SPACE = 9 ** 9
+	GUARD_SPACE = WINDOW_SPACE
+	HEALTH_SPACE = GUARD_SPACE * 5
+	action_names = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'FIGHT', 'HIDE', 'HEAL', 'WAIT']
+	row_labels = ['Heal cell', 'Guard G1', 'Guard G2', 'Guard G3', 'Guard G4']
+
+	def decode_state(state_id):
+		remainder = state_id % HEALTH_SPACE
+		guard_index = remainder // GUARD_SPACE
+		window_hash = remainder % GUARD_SPACE
+		return guard_index, window_hash
+
+	def center_cell_from_window_hash(window_hash):
+		temp = window_hash
+		for _ in range(4):
+			temp //= 9
+		return temp % 9
+
+	table_data = np.zeros((5, 8))
+	table_weights = np.zeros((5, 8))
+
+	for state_id, q_vals in Q_table.items():
+		guard_index, window_hash = decode_state(state_id)
+		center_val = center_cell_from_window_hash(window_hash)
+		state_visits = N_sa[state_id]
+		tile_type = center_val % 4
+		is_heal = (tile_type == 2)
+
+		if is_heal:
+			for a in range(8):
+				w = state_visits[a]
+				table_data[0][a] += q_vals[a] * w
+				table_weights[0][a] += w
+
+		if 1 <= guard_index <= 4:
+			row = guard_index
+			for a in range(8):
+				w = state_visits[a]
+				table_data[row][a] += q_vals[a] * w
+				table_weights[row][a] += w
+
+	with np.errstate(divide='ignore', invalid='ignore'):
+		table_avg = np.where(table_weights > 0, table_data / table_weights, 0.0)
+
+	print('5x8 Weighted Average Q-Value Table:')
+	header = f"{'State':<12}" + ''.join(f"{a:>10}" for a in action_names)
+	print(header)
+	print('-' * len(header))
+	for i, label in enumerate(row_labels):
+		row_str = f"{label:<12}" + ''.join(f"{table_avg[i][j]:>10.2f}" for j in range(8))
+		print(row_str)
+
 if not train_flag:
 	
 	rewards = []
+	episode_lengths = []
+	unseen_state_set = set()
+	unseen_action_count = 0
+	total_action_count = 0
 
 	filename = 'Q_table.pickle'
 	input(f"\n{BOLD}Currently loading Q-table from "+filename+f"{RESET}.  \n\nPress Enter to confirm, or Ctrl+C to cancel and load a different Q-table file.\n(set num_episodes and decay_rate in Q_learning.py).")
@@ -257,9 +326,14 @@ if not train_flag:
 	for episode in tqdm(range(10000)):
 		obs, reward, done, info = env.reset()
 		total_reward = 0
+		episode_steps = 0
 		
 		while not done:
 			state = hash(obs)
+			if state not in Q_table:
+				unseen_state_set.add(state)
+				unseen_action_count += 1
+			total_action_count += 1
 			try:
 				action = np.random.choice(env.action_space.n, p=softmax(Q_table[state]))  # Select action using softmax over Q-values
 			except KeyError:
@@ -268,11 +342,27 @@ if not train_flag:
 			obs, reward, done, info = env.step(action)
 			
 			total_reward += reward
+			episode_steps += 1
 			if gui_flag:
 				refresh(obs, reward, done, info, delay=.1)  # Update the game screen [GUI only]
 
 		# print("Total reward:", total_reward)
 		rewards.append(total_reward)
+		episode_lengths.append(episode_steps)
 
 	avg_reward = sum(rewards)/len(rewards)
-	print(f"\nAverage reward over {len(rewards)} episodes: {avg_reward:.2f}{RESET}ok\n")
+	avg_length = sum(episode_lengths)/len(episode_lengths)
+	unseen_action_pct = (100.0 * unseen_action_count / total_action_count) if total_action_count > 0 else 0.0
+
+	print('\nResults Summary:')
+	print(f'- Training episodes: {num_episodes}')
+	print(f'- Decay rate: {decay_rate}')
+	print(f'- Average episode length (evaluation): {avg_length:.2f}')
+	print(f'- Average reward over {len(rewards)} evaluation episodes: {avg_reward:.2f}')
+	print(f'- Number of unique states in Q-table: {len(Q_table)}')
+	print(f'- Unique evaluation states not in Q-table: {len(unseen_state_set)}')
+	print(f'- Percentage of actions from unseen states: {unseen_action_pct:.2f}%')
+	with open('train_stats.pickle', 'rb') as handle:
+		episode_rewards, N_sa = pickle.load(handle)
+
+	generate_results(Q_table, episode_rewards, N_sa)
